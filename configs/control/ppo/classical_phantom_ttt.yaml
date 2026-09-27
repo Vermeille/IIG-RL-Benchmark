@@ -21,6 +21,7 @@ clip_coef: 0.1
 clip_vloss: true
 vf_coef: 0.5
 max_grad_norm: 0.5
+# Baseline-selected learner entropy; teacher uses the pre-existing AdvShape x5 ratio.
 agent_entropy_strength: 0.05
 environment_entropy_strength: 0.25
 perplexity_adaptation_rate: 0.0
