@@ -19,9 +19,9 @@ training dynamics are changed to:
 - only the **agent** is evaluated for exact exploitability and saved as
   `agent.pth`; the teacher is also saved as `environment.pth` for analysis.
 
-The defaults are the current Connect Four recipe from Century-RL where they
-map cleanly to this benchmark. They are intentionally exposed as Hydra knobs
-rather than hidden in the implementation.
+The full-method defaults are the current Connect Four recipe from Century-RL
+where they map cleanly to this benchmark. They are intentionally exposed as
+Hydra knobs rather than hidden in the implementation.
 
 ## Smoke run
 
@@ -46,7 +46,7 @@ python main.py \
   seed=0
 ```
 
-Repeat for the benchmark's exact-exploitability games and desired seeds:
+Exact exploitability is supported for:
 
 - `classical_phantom_ttt`
 - `abrupt_phantom_ttt`
@@ -57,43 +57,65 @@ The resulting `exploitability.csv` is directly comparable to the other
 benchmark algorithms because it uses the benchmark's unchanged exact
 exploitability callback.
 
-## Ablations
+## HPO-matched structural controls
 
-Ablation configs live in `configs/ablation/` and are merged directly into the
-`algorithm` config. They keep the same code path and only disable the mechanism
-being tested.
+These are the cleanest tests of the learner/teacher hypothesis.
 
-### Baseline-matched controls
+For each exact-exploitability game, `configs/control/{ppo,mmd}/<game>.yaml`
+reuses the benchmark authors' **best hyperparameters selected for minimum final
+exploitability** wherever AdvShape exposes the same knob. This includes the
+optimizer scalar settings, rollout/minibatch sizes, update epochs, gamma,
+GAE/value lambda, PPO clipping, value loss settings, gradient clipping,
+entropy coefficient, and MMD KL coefficient.
 
-These are the cleanest tests of the structural learner/teacher hypothesis.
-They keep AdvShape's two-policy dynamics and win-rate advantage shaping while
-reusing the benchmark baselines' regularization coefficients instead of the
-Century-RL recipe.
+The adaptive PPL and KL controllers are disabled. The entropy coefficient is
+the same for learner and teacher. The remaining intended algorithmic changes
+are the learner/teacher split and win-rate advantage shaping.
 
-**PPO controls:** fixed entropy coefficient `0.05` for both policies, no KL,
-no perplexity thermostat.
-
-```bash
-python main.py algorithm=advshape +ablation=advshape_ppo_controls \
-  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
-```
-
-**MMD controls:** fixed entropy coefficient `0.05` for both policies and fixed
-reverse/backward KL `KL(pi_new || pi_rollout)` coefficient `0.05`, with no
-adaptive controllers.
+Example, PPO-matched control on Abrupt Phantom TTT:
 
 ```bash
-python main.py algorithm=advshape +ablation=advshape_mmd_controls \
-  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
+python main.py \
+  algorithm=advshape \
+  +control=ppo/abrupt_phantom_ttt \
+  game=abrupt_phantom_ttt \
+  max_steps=10000000 \
+  compute_exploitability=True
 ```
 
-The intended interpretation is deliberately narrow: if these variants improve
-on the corresponding PPO/MMD baselines, the gain cannot be attributed to our
-adaptive entropy/KL controllers or to stronger regularization coefficients.
+MMD-matched control on the same game:
+
+```bash
+python main.py \
+  algorithm=advshape \
+  +control=mmd/abrupt_phantom_ttt \
+  game=abrupt_phantom_ttt \
+  max_steps=10000000 \
+  compute_exploitability=True
+```
+
+Use the matching control name for the other three games.
+
+Published selected regularization coefficients copied into these controls:
+
+| game | PPO entropy | MMD entropy | MMD reverse KL |
+| --- | ---: | ---: | ---: |
+| classical Phantom TTT | 0.05 | 0.05 | 0.05 |
+| abrupt Phantom TTT | 0.20 | 0.20 | 0.20 |
+| classical Dark Hex | 0.05 | 0.20 | 0.025 |
+| abrupt Dark Hex | 0.05 | 0.05 | 0.10 |
+
+One residual implementation difference is intentionally documented rather than
+hidden: the current AdvShape learner retains its own learning-rate schedule,
+while the benchmark PPO/MMD runners use their native annealing code. The scalar
+learning rate itself is copied from the selected baseline configuration.
+
+## Mechanism ablations
+
+These configs live in `configs/ablation/` and keep the same AdvShape code path.
+They are useful after the HPO-matched controls establish the structural result.
 
 ### Fixed KL coefficient
-
-Keep the reverse-KL regularizer but disable its adaptive controller:
 
 ```bash
 python main.py algorithm=advshape +ablation=advshape_fixed_kl \
@@ -102,8 +124,6 @@ python main.py algorithm=advshape +ablation=advshape_fixed_kl \
 
 ### No KL
 
-Remove the KL regularizer entirely:
-
 ```bash
 python main.py algorithm=advshape +ablation=advshape_no_kl \
   game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
@@ -111,8 +131,8 @@ python main.py algorithm=advshape +ablation=advshape_no_kl \
 
 ### Fixed asymmetric entropy
 
-Disable the perplexity thermostat while retaining the configured fixed entropy
-coefficients (`0.1` for the learner, `0.5` for the teacher by default):
+Disable the perplexity thermostat while retaining the full recipe's fixed
+entropy coefficients (`0.1` learner, `0.5` teacher by default):
 
 ```bash
 python main.py algorithm=advshape +ablation=advshape_fixed_ppl \
@@ -121,35 +141,28 @@ python main.py algorithm=advshape +ablation=advshape_fixed_ppl \
 
 ### Both controllers fixed
 
-Keep both regularizers but disable both adaptive controllers:
-
 ```bash
 python main.py algorithm=advshape +ablation=advshape_fixed_controls \
   game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
 ```
 
-### Core asymmetric method
+### Core asymmetric recipe
 
-The strongest structural ablation: no KL penalty and no adaptive perplexity
-controller. The learner/teacher split, win-rate advantage shaping and fixed
-asymmetric entropy strengths remain:
+No KL penalty and no adaptive perplexity controller. The learner/teacher split,
+win-rate advantage shaping and fixed asymmetric entropy strengths remain:
 
 ```bash
 python main.py algorithm=advshape +ablation=advshape_core \
   game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
 ```
 
-This makes the comparison useful for separating three claims:
+Together, the controls and ablations separate the claims:
 
-1. asymmetric learner/teacher self-play + difficulty shaping is sufficient;
-2. fixed regularization improves it;
-3. adaptive KL/perplexity control provides an additional gain.
+1. learner/teacher self-play + difficulty shaping improves on matched PPO/MMD;
+2. asymmetric fixed exploration provides an additional gain;
+3. adaptive PPL/KL control provides any further gain.
 
-## Important experimental note
-
-The default perplexity schedule is **not** expected to be universally optimal
-across games because raw perplexity depends on branching factor. For the paper,
-the baseline-matched controls deliberately reuse the published PPO/MMD
-regularization coefficients rather than tuning replacements after observing
-benchmark exploitability. The full AdvShape recipe can then be reported
-separately as the tuned version of the method.
+For the paper, the HPO-matched controls should be treated as the primary
+structural comparison. The full AdvShape recipe is then a separate tuned
+version of the method, avoiding post-hoc claims that the structural gain came
+from more favorable regularization coefficients.
