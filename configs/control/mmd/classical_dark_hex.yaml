@@ -2,6 +2,7 @@
 # AdvShape dynamics with the benchmark's best MMD hyperparameters for
 # classical_dark_hex (minimum final exploitability selection).
 learning_rate: 0.0000625
+lr_schedule: benchmark_linear
 weight_decay: 0.0
 adam_beta1: 0.9
 adam_beta2: 0.999
