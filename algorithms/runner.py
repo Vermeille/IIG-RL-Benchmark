@@ -35,4 +35,9 @@ def get_runner_cls(algorithm):
 
         return RunPPG
 
+    if algorithm == "advshape":
+        from algorithms.advshape.run_advshape import RunAdvShape
+
+        return RunAdvShape
+
     raise ValueError(f'Unrecognized algorithm: {algorithm}')
