@@ -237,12 +237,19 @@ class RunAdvShape:
         self.train_log_file = os.path.join(self.meta_config.experiment_dir, "train_log.csv")
 
         batch_size = int(self.config.num_envs * self.config.num_steps)
+        # Match PPO/MMD's own scheduler denominator for HPO-matched controls.
+        num_updates = self.meta_config.max_steps // batch_size + 1
         cp_step = 0
         while self.total_steps_done < self.meta_config.max_steps:
             requested = min(batch_size, self.meta_config.max_steps - self.total_steps_done)
             episodes = self._collect_batch(requested)
             transitions, win_rates = self._prepare(episodes)
             progress = min(self.total_steps_done / self.meta_config.max_steps, 1.0)
+            lr_progress = (
+                min(self.update_idx / num_updates, 1.0)
+                if self.config.lr_schedule == "benchmark_linear"
+                else progress
+            )
 
             advantage_scales = (
                 self.config.agent_threshold - win_rates[0],
@@ -254,6 +261,7 @@ class RunAdvShape:
                     transitions[strategy_id],
                     advantage_scale=advantage_scales[strategy_id],
                     progress=progress,
+                    lr_progress=lr_progress,
                     update_idx=self.update_idx,
                 )
                 for strategy_id in (0, 1)
