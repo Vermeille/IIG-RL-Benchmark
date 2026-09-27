@@ -1,0 +1,5 @@
+# @package algorithm
+# Keep asymmetric entropy strengths, but disable the perplexity thermostat.
+# With adaptation_rate=0, entropy coefficients stay fixed at their configured
+# agent/environment values and the PPL targets no longer affect training.
+perplexity_adaptation_rate: 0.0
