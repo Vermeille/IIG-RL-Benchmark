@@ -1,7 +1,7 @@
 """Asymmetric two-policy PPO with win-rate controlled advantage shaping.
 
 This is a benchmark-native port of Century-RL's adversarial-advshape trainer.
-The learning agent and its environment/teacher are separate policies.  Each is
+The learning agent and its environment/teacher are separate policies. Each is
 trained with PPO, but its policy gradient is scaled by
 
     target_win_rate - observed_batch_win_rate.
@@ -145,6 +145,7 @@ class AdvShapePolicy:
         num_actions: int,
         device: torch.device,
         learning_rate: float,
+        lr_schedule: str,
         weight_decay: float,
         adam_beta1: float,
         adam_beta2: float,
@@ -163,6 +164,7 @@ class AdvShapePolicy:
     ):
         self.device = device
         self.num_actions = int(num_actions)
+        self.lr_schedule = str(lr_schedule)
         self.network = PPOAgent(self.num_actions, observation_shape, device).to(device)
         self.optimizer = optim.AdamW(
             self.network.parameters(),
@@ -189,13 +191,19 @@ class AdvShapePolicy:
         )
 
     def set_lr(self, progress: float, update_idx: int, warmup_updates: int = 20):
-        if warmup_updates > 0 and update_idx < warmup_updates:
-            scale = (update_idx + 1) / warmup_updates
-        elif progress <= 0.5:
-            scale = 1.0
+        if self.lr_schedule == "benchmark_linear":
+            # Match PPO/MMD's native anneal_learning_rate(): lr = lr0 * (1-u/U).
+            scale = max(0.0, 1.0 - progress)
+        elif self.lr_schedule == "advshape":
+            if warmup_updates > 0 and update_idx < warmup_updates:
+                scale = (update_idx + 1) / warmup_updates
+            elif progress <= 0.5:
+                scale = 1.0
+            else:
+                x = min(max((progress - 0.5) / 0.5, 0.0), 1.0)
+                scale = 0.5 + 0.5 * math.cos(math.pi * x)
         else:
-            x = min(max((progress - 0.5) / 0.5, 0.0), 1.0)
-            scale = 0.5 + 0.5 * math.cos(math.pi * x)
+            raise ValueError(f"unknown lr_schedule: {self.lr_schedule}")
         for group in self.optimizer.param_groups:
             group["lr"] = self.base_learning_rate * scale
 
@@ -223,6 +231,7 @@ class AdvShapeLearner:
             num_actions=num_actions,
             device=device,
             learning_rate=config.learning_rate,
+            lr_schedule=config.lr_schedule,
             weight_decay=config.weight_decay,
             adam_beta1=config.adam_beta1,
             adam_beta2=config.adam_beta2,
@@ -278,13 +287,18 @@ class AdvShapeLearner:
         *,
         advantage_scale: float,
         progress: float,
+        lr_progress: float | None = None,
         update_idx: int,
     ) -> dict[str, float]:
         if not transitions:
             return {}
 
         policy = self.policies[strategy_id]
-        policy.set_lr(progress, update_idx, self.config.warmup_updates)
+        policy.set_lr(
+            progress if lr_progress is None else lr_progress,
+            update_idx,
+            self.config.warmup_updates,
+        )
         (
             obs,
             legal,
