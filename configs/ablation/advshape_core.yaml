@@ -1,0 +1,7 @@
+# @package algorithm
+# Minimal asymmetric method: keep learner/teacher role asymmetry, win-rate
+# advantage shaping, and fixed asymmetric entropy strengths, but remove the
+# adaptive perplexity controller and the KL penalty entirely.
+perplexity_adaptation_rate: 0.0
+kl_strength: 0.0
+kl_adaptation_rate: 0.0
