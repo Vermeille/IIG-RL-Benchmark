@@ -66,7 +66,15 @@ reuses the benchmark authors' **best hyperparameters selected for minimum final
 exploitability** wherever AdvShape exposes the same knob. This includes the
 optimizer scalar settings, rollout/minibatch sizes, update epochs, gamma,
 GAE/value lambda, PPO clipping, value loss settings, gradient clipping,
-entropy coefficient, and MMD KL coefficient.
+entropy coefficient, MMD KL coefficient, and the native PPO/MMD learning-rate
+annealing schedule.
+
+The matched controls use the benchmark runner's linear schedule exactly:
+
+`lr = initial_lr * max(0, 1 - update / num_updates)`
+
+with `num_updates = max_steps // (num_envs * num_steps) + 1`, matching the PPO
+and MMD implementation.
 
 The adaptive PPL and KL controllers are disabled. The entropy coefficient is
 the same for learner and teacher. The remaining intended algorithmic changes
@@ -104,11 +112,6 @@ Published selected regularization coefficients copied into these controls:
 | abrupt Phantom TTT | 0.20 | 0.20 | 0.20 |
 | classical Dark Hex | 0.05 | 0.20 | 0.025 |
 | abrupt Dark Hex | 0.05 | 0.05 | 0.10 |
-
-One residual implementation difference is intentionally documented rather than
-hidden: the current AdvShape learner retains its own learning-rate schedule,
-while the benchmark PPO/MMD runners use their native annealing code. The scalar
-learning rate itself is copied from the selected baseline configuration.
 
 ## Mechanism ablations
 
@@ -165,4 +168,4 @@ Together, the controls and ablations separate the claims:
 For the paper, the HPO-matched controls should be treated as the primary
 structural comparison. The full AdvShape recipe is then a separate tuned
 version of the method, avoiding post-hoc claims that the structural gain came
-from more favorable regularization coefficients.
+from more favorable regularization coefficients or learning-rate annealing.
