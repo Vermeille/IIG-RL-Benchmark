@@ -35,17 +35,82 @@ python main.py \
   compute_exploitability_every=50000
 ```
 
-## Benchmark run
+## Exact matched-baseline launcher
+
+`run_advshape_paper.sh` avoids hard-coded visual read-offs from Figure 15.
+Instead, for every game and seed it:
+
+1. loads the repository-published `best_hparams.yaml` for PPO or MMD;
+2. reruns that baseline with the selected seed and training budget;
+3. runs the corresponding AdvShape HPO-matched control with the same seed and budget;
+4. reads the final exact `avg_score_response` from each `exploitability.csv`;
+5. prints the exact paired delta and percentage exploitability reduction;
+6. aggregates means over all requested seeds and writes `summary.tsv`.
+
+This is more expensive than comparing to a number copied from a plot, but the
+reference is numeric and reproducible rather than a pixel estimate.
+
+Single-seed comparison:
 
 ```bash
-python main.py \
-  algorithm=advshape \
-  game=abrupt_phantom_ttt \
-  max_steps=10000000 \
-  compute_exploitability=True \
-  compute_exploitability_every=500000 \
-  seed=0
+bash run_advshape_paper.sh ppo
+bash run_advshape_paper.sh mmd
 ```
+
+Equal-teacher-entropy ablation:
+
+```bash
+bash run_advshape_paper.sh ppo equal_entropy
+```
+
+Ten seeds:
+
+```bash
+SEEDS="0 1 2 3 4 5 6 7 8 9" bash run_advshape_paper.sh ppo
+```
+
+The paper's Figure 15 also reports mean exploitability and standard deviation
+over 10 seeds for the best-performing hyperparameter set. The exact numeric
+final means are not tabulated in the paper, so the launcher deliberately does
+not claim to reproduce a Figure 15 endpoint from visual inspection. It instead
+performs an exact matched rerun of the repository-published best configuration.
+
+The script writes:
+
+```text
+results/<group>/summary.tsv
+```
+
+with per-seed baseline score, AdvShape score, delta, relative exploitability
+reduction, verdict, and both run directories.
+
+## HPO-matched structural controls
+
+For each exact-exploitability game, `configs/control/{ppo,mmd}/<game>.yaml`
+reuses the benchmark authors' published best hyperparameters wherever AdvShape
+exposes the same knob. This includes optimizer settings, rollout/minibatch
+sizes, update epochs, gamma, GAE/value lambda, PPO clipping, value loss
+settings, gradient clipping, learner entropy coefficient, MMD KL coefficient,
+and the native PPO/MMD learning-rate annealing schedule.
+
+The matched controls use the benchmark runner's linear LR schedule exactly:
+
+```text
+lr = initial_lr * max(0, 1 - update / num_updates)
+num_updates = max_steps // (num_envs * num_steps) + 1
+```
+
+Adaptive PPL and adaptive KL control are disabled. The learner keeps the
+baseline-selected entropy coefficient, while the teacher uses a fixed **5x
+higher entropy coefficient**, preserving the structural exploration asymmetry
+of the Century-RL recipe (`0.1` learner vs `0.5` teacher) without adding an
+adaptive thermostat.
+
+Thus the intentional structural differences from the matched PPO/MMD setup are:
+
+1. separate learner and teacher policies;
+2. win-rate controlled advantage shaping;
+3. fixed higher teacher exploration.
 
 Exact exploitability is supported for:
 
@@ -54,99 +119,7 @@ Exact exploitability is supported for:
 - `classical_dark_hex`
 - `abrupt_dark_hex`
 
-The resulting `exploitability.csv` is directly comparable to the other
-benchmark algorithms because it uses the benchmark's unchanged exact
-exploitability callback.
-
-## Convenience paper launcher
-
-`run_advshape_paper.sh` runs all four exact-exploitability games using either
-the PPO-matched or MMD-matched control, extracts the final exact exploitability,
-and prints a colored comparison against the approximate best generic-PG final
-mean visible in Figure 15 of the ICLR 2026 paper.
-
-Single-seed smoke/comparison run:
-
-```bash
-bash run_advshape_paper.sh ppo
-bash run_advshape_paper.sh mmd
-```
-
-Run the equal-teacher-entropy ablation instead:
-
-```bash
-bash run_advshape_paper.sh ppo equal_entropy
-```
-
-Run 10 seeds, matching the paper's best-config evaluation protocol:
-
-```bash
-SEEDS="0 1 2 3 4 5 6 7 8 9" bash run_advshape_paper.sh ppo
-```
-
-The script writes `results/<group>/summary.tsv`. Because the paper plots the
-best-config 10-seed means but does not tabulate their exact final numerical
-values, the reference thresholds are explicitly marked as approximate visual
-read-offs and use a `+/-0.02` dead zone. `BETTER` and `WORSE` therefore mean
-clearly outside that plot-reading uncertainty; `BALLPARK` means the result is
-within it.
-
-## HPO-matched structural controls
-
-These are the cleanest tests of the asymmetric learner/teacher hypothesis.
-
-For each exact-exploitability game, `configs/control/{ppo,mmd}/<game>.yaml`
-reuses the benchmark authors' **best hyperparameters selected for minimum final
-exploitability** wherever AdvShape exposes the same knob. This includes the
-optimizer scalar settings, rollout/minibatch sizes, update epochs, gamma,
-GAE/value lambda, PPO clipping, value loss settings, gradient clipping,
-learner entropy coefficient, MMD KL coefficient, and the native PPO/MMD
-learning-rate annealing schedule.
-
-The matched controls use the benchmark runner's linear schedule exactly:
-
-`lr = initial_lr * max(0, 1 - update / num_updates)`
-
-with `num_updates = max_steps // (num_envs * num_steps) + 1`, matching the PPO
-and MMD implementation.
-
-Adaptive PPL and adaptive KL control are disabled. The learner keeps the
-baseline's selected entropy coefficient, while the teacher uses a fixed **5x
-higher entropy coefficient**, preserving the structural exploration asymmetry
-of the Century-RL recipe (`0.1` learner vs `0.5` teacher) without introducing
-an additional tuned hyperparameter or an adaptive thermostat.
-
-Thus the intentional structural differences from the matched PPO/MMD setup are:
-
-1. separate learner and teacher policies;
-2. win-rate controlled advantage shaping;
-3. a fixed, more exploratory teacher.
-
-Example, PPO-matched control on Abrupt Phantom TTT:
-
-```bash
-python main.py \
-  algorithm=advshape \
-  +control=ppo/abrupt_phantom_ttt \
-  game=abrupt_phantom_ttt \
-  max_steps=10000000 \
-  compute_exploitability=True
-```
-
-MMD-matched control on the same game:
-
-```bash
-python main.py \
-  algorithm=advshape \
-  +control=mmd/abrupt_phantom_ttt \
-  game=abrupt_phantom_ttt \
-  max_steps=10000000 \
-  compute_exploitability=True
-```
-
-Use the matching control name for the other three games.
-
-Selected baseline coefficients and the resulting fixed teacher coefficients:
+### Selected entropy / KL coefficients
 
 | game | PPO learner entropy | PPO teacher entropy | MMD learner entropy | MMD teacher entropy | MMD reverse KL |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -155,12 +128,16 @@ Selected baseline coefficients and the resulting fixed teacher coefficients:
 | classical Dark Hex | 0.05 | 0.25 | 0.20 | 1.00 | 0.025 |
 | abrupt Dark Hex | 0.05 | 0.25 | 0.05 | 0.25 | 0.10 |
 
-### Equal-teacher-entropy ablation
+## Exploration-asymmetry ablation
 
-To isolate the contribution of the fixed exploration asymmetry, compose an
-HPO-matched control with `advshape_equal_teacher_entropy`. This forces the
-teacher coefficient back to the learner coefficient while leaving the rest of
-the matched setup unchanged:
+To isolate the contribution of higher teacher exploration, compose a matched
+control with:
+
+```bash
++ablation=advshape_equal_teacher_entropy
+```
+
+For example:
 
 ```bash
 python main.py \
@@ -172,60 +149,19 @@ python main.py \
   compute_exploitability=True
 ```
 
-## Mechanism ablations
+## Other mechanism ablations
 
-These configs live in `configs/ablation/` and keep the same AdvShape code path.
-They are useful after the HPO-matched controls establish the structural result.
+Composable configs under `configs/ablation/`:
 
-### Fixed KL coefficient
+- `advshape_equal_teacher_entropy`: remove fixed teacher exploration asymmetry;
+- `advshape_fixed_kl`: fixed KL coefficient, no KL controller;
+- `advshape_no_kl`: remove KL entirely;
+- `advshape_fixed_ppl`: fixed asymmetric entropy, no PPL thermostat;
+- `advshape_fixed_controls`: keep regularizers but freeze both controllers;
+- `advshape_core`: no KL and no adaptive PPL; retains learner/teacher split,
+  win-rate difficulty shaping, and fixed asymmetric entropy.
 
-```bash
-python main.py algorithm=advshape +ablation=advshape_fixed_kl \
-  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
-```
-
-### No KL
-
-```bash
-python main.py algorithm=advshape +ablation=advshape_no_kl \
-  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
-```
-
-### Fixed asymmetric entropy
-
-Disable the perplexity thermostat while retaining the full recipe's fixed
-entropy coefficients (`0.1` learner, `0.5` teacher by default):
-
-```bash
-python main.py algorithm=advshape +ablation=advshape_fixed_ppl \
-  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
-```
-
-### Both controllers fixed
-
-```bash
-python main.py algorithm=advshape +ablation=advshape_fixed_controls \
-  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
-```
-
-### Core asymmetric recipe
-
-No KL penalty and no adaptive perplexity controller. The learner/teacher split,
-win-rate advantage shaping and fixed asymmetric entropy strengths remain:
-
-```bash
-python main.py algorithm=advshape +ablation=advshape_core \
-  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
-```
-
-Together, the controls and ablations separate the claims:
-
-1. an asymmetric learner/teacher curriculum improves on matched PPO/MMD;
-2. higher fixed teacher exploration contributes to that gain;
-3. adaptive PPL/KL control provides any further gain.
-
-For the paper, the HPO-matched controls should be treated as the primary
-structural comparison. The equal-teacher-entropy ablation then isolates the
-exploration asymmetry, while the full AdvShape recipe is a separate tuned
-version of the method. This avoids post-hoc claims that the structural gain came
-from more favorable baseline hyperparameters or learning-rate annealing.
+For the paper, the HPO-matched controls are the primary structural comparison.
+The equal-teacher-entropy ablation isolates exploration asymmetry, while the
+full AdvShape recipe is a separate version testing whether adaptive PPL/KL adds
+anything beyond the core learner/teacher mechanism.
