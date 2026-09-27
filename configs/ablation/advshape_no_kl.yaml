@@ -1,0 +1,4 @@
+# @package algorithm
+# Remove the reverse-KL penalty entirely.
+kl_strength: 0.0
+kl_adaptation_rate: 0.0
