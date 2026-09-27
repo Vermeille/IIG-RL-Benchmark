@@ -57,6 +57,66 @@ The resulting `exploitability.csv` is directly comparable to the other
 benchmark algorithms because it uses the benchmark's unchanged exact
 exploitability callback.
 
+## Ablations
+
+Ablation configs live in `configs/ablation/` and are merged directly into the
+`algorithm` config. They keep the same code path and only disable the mechanism
+being tested.
+
+### Fixed KL coefficient
+
+Keep the reverse-KL regularizer but disable its adaptive controller:
+
+```bash
+python main.py algorithm=advshape +ablation=advshape_fixed_kl \
+  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
+```
+
+### No KL
+
+Remove the KL regularizer entirely:
+
+```bash
+python main.py algorithm=advshape +ablation=advshape_no_kl \
+  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
+```
+
+### Fixed asymmetric entropy
+
+Disable the perplexity thermostat while retaining the configured fixed entropy
+coefficients (`0.1` for the learner, `0.5` for the teacher by default):
+
+```bash
+python main.py algorithm=advshape +ablation=advshape_fixed_ppl \
+  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
+```
+
+### Both controllers fixed
+
+Keep both regularizers but disable both adaptive controllers:
+
+```bash
+python main.py algorithm=advshape +ablation=advshape_fixed_controls \
+  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
+```
+
+### Core asymmetric method
+
+The strongest structural ablation: no KL penalty and no adaptive perplexity
+controller. The learner/teacher split, win-rate advantage shaping and fixed
+asymmetric entropy strengths remain:
+
+```bash
+python main.py algorithm=advshape +ablation=advshape_core \
+  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
+```
+
+This makes the comparison useful for separating three claims:
+
+1. asymmetric learner/teacher self-play + difficulty shaping is sufficient;
+2. fixed regularization improves it;
+3. adaptive KL/perplexity control provides an additional gain.
+
 ## Important experimental note
 
 The default perplexity schedule is **not** expected to be universally optimal
