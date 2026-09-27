@@ -2,6 +2,7 @@ import torch
 
 from algorithms.advshape.advshape import (
     AdaptiveKLController,
+    AdvShapePolicy,
     PerplexityController,
     Transition,
     normalize_advantages,
@@ -51,6 +52,33 @@ def test_adaptive_kl_controller_pushes_up_above_target():
     initial = controller.strength
     controller.update(0.2)
     assert controller.strength > initial
+
+
+def test_benchmark_linear_lr_matches_ppo_formula_and_ignores_warmup():
+    policy = AdvShapePolicy(
+        observation_shape=(3,),
+        num_actions=2,
+        device=torch.device("cpu"),
+        learning_rate=1.0,
+        lr_schedule="benchmark_linear",
+        weight_decay=0.0,
+        adam_beta1=0.9,
+        adam_beta2=0.999,
+        adam_eps=1e-5,
+        perplexity_start=2.0,
+        perplexity_end=1.0,
+        entropy_strength=0.1,
+        entropy_baseline_ratio=1.0,
+        perplexity_adaptation_rate=0.0,
+        perplexity_beta=0.98,
+        perplexity_deadband=0.02,
+        kl_target=0.05,
+        kl_strength=0.01,
+        kl_adaptation_rate=0.0,
+        kl_deadband=0.001,
+    )
+    policy.set_lr(progress=0.25, update_idx=0, warmup_updates=20)
+    assert policy.optimizer.param_groups[0]["lr"] == 0.75
 
 
 def test_normalize_advantages_is_zero_mean_unit_sample_std():
