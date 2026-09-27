@@ -1,0 +1,26 @@
+# @package algorithm
+# AdvShape dynamics with the benchmark's best MMD hyperparameters for
+# abrupt_phantom_ttt (minimum final exploitability selection).
+learning_rate: 0.00025
+weight_decay: 0.0
+adam_beta1: 0.9
+adam_beta2: 0.999
+adam_eps: 0.00001
+num_envs: 8
+num_steps: 16
+num_minibatches: 1
+update_epochs: 4
+warmup_updates: 0
+gamma: 0.99
+gae_lambda: 0.95
+value_lambda: 0.95
+clip_coef: 0.8
+clip_vloss: true
+vf_coef: 1.0
+max_grad_norm: 0.25
+agent_entropy_strength: 0.2
+environment_entropy_strength: 0.2
+perplexity_adaptation_rate: 0.0
+entropy_baseline_ratio: 1.0
+kl_strength: 0.2
+kl_adaptation_rate: 0.0
