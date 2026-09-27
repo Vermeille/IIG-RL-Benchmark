@@ -63,6 +63,34 @@ Ablation configs live in `configs/ablation/` and are merged directly into the
 `algorithm` config. They keep the same code path and only disable the mechanism
 being tested.
 
+### Baseline-matched controls
+
+These are the cleanest tests of the structural learner/teacher hypothesis.
+They keep AdvShape's two-policy dynamics and win-rate advantage shaping while
+reusing the benchmark baselines' regularization coefficients instead of the
+Century-RL recipe.
+
+**PPO controls:** fixed entropy coefficient `0.05` for both policies, no KL,
+no perplexity thermostat.
+
+```bash
+python main.py algorithm=advshape +ablation=advshape_ppo_controls \
+  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
+```
+
+**MMD controls:** fixed entropy coefficient `0.05` for both policies and fixed
+reverse/backward KL `KL(pi_new || pi_rollout)` coefficient `0.05`, with no
+adaptive controllers.
+
+```bash
+python main.py algorithm=advshape +ablation=advshape_mmd_controls \
+  game=abrupt_phantom_ttt max_steps=10000000 compute_exploitability=True
+```
+
+The intended interpretation is deliberately narrow: if these variants improve
+on the corresponding PPO/MMD baselines, the gain cannot be attributed to our
+adaptive entropy/KL controllers or to stronger regularization coefficients.
+
 ### Fixed KL coefficient
 
 Keep the reverse-KL regularizer but disable its adaptive controller:
@@ -120,7 +148,8 @@ This makes the comparison useful for separating three claims:
 ## Important experimental note
 
 The default perplexity schedule is **not** expected to be universally optimal
-across games because raw perplexity depends on branching factor. For a paper,
-keep the tuning budget and search procedure explicit and comparable to the
-benchmark baselines rather than silently hand-tuning each game after looking at
-test exploitability.
+across games because raw perplexity depends on branching factor. For the paper,
+the baseline-matched controls deliberately reuse the published PPO/MMD
+regularization coefficients rather than tuning replacements after observing
+benchmark exploitability. The full AdvShape recipe can then be reported
+separately as the tuned version of the method.
