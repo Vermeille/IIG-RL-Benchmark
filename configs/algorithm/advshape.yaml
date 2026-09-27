@@ -7,6 +7,7 @@ num_steps: 128
 num_minibatches: 4
 update_epochs: 1
 warmup_updates: 20
+lr_schedule: advshape
 
 # PPO / returns. These mirror the current Century-RL adversarial recipe where
 # possible while retaining the benchmark's PPOAgent architecture.
