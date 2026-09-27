@@ -58,6 +58,39 @@ The resulting `exploitability.csv` is directly comparable to the other
 benchmark algorithms because it uses the benchmark's unchanged exact
 exploitability callback.
 
+## Convenience paper launcher
+
+`run_advshape_paper.sh` runs all four exact-exploitability games using either
+the PPO-matched or MMD-matched control, extracts the final exact exploitability,
+and prints a colored comparison against the approximate best generic-PG final
+mean visible in Figure 15 of the ICLR 2026 paper.
+
+Single-seed smoke/comparison run:
+
+```bash
+bash run_advshape_paper.sh ppo
+bash run_advshape_paper.sh mmd
+```
+
+Run the equal-teacher-entropy ablation instead:
+
+```bash
+bash run_advshape_paper.sh ppo equal_entropy
+```
+
+Run 10 seeds, matching the paper's best-config evaluation protocol:
+
+```bash
+SEEDS="0 1 2 3 4 5 6 7 8 9" bash run_advshape_paper.sh ppo
+```
+
+The script writes `results/<group>/summary.tsv`. Because the paper plots the
+best-config 10-seed means but does not tabulate their exact final numerical
+values, the reference thresholds are explicitly marked as approximate visual
+read-offs and use a `+/-0.02` dead zone. `BETTER` and `WORSE` therefore mean
+clearly outside that plot-reading uncertainty; `BALLPARK` means the result is
+within it.
+
 ## HPO-matched structural controls
 
 These are the cleanest tests of the asymmetric learner/teacher hypothesis.
