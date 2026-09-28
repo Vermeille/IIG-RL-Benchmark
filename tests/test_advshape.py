@@ -21,6 +21,32 @@ def _transition(advantage):
     )
 
 
+def _policy(optimizer_type="adam"):
+    return AdvShapePolicy(
+        observation_shape=(3,),
+        num_actions=2,
+        device=torch.device("cpu"),
+        learning_rate=1.0,
+        lr_schedule="benchmark_linear",
+        optimizer_type=optimizer_type,
+        weight_decay=0.0,
+        adam_beta1=0.9,
+        adam_beta2=0.999,
+        adam_eps=1e-5,
+        perplexity_start=2.0,
+        perplexity_end=1.0,
+        entropy_strength=0.1,
+        entropy_baseline_ratio=1.0,
+        perplexity_adaptation_rate=0.0,
+        perplexity_beta=0.98,
+        perplexity_deadband=0.02,
+        kl_target=0.05,
+        kl_strength=0.01,
+        kl_adaptation_rate=0.0,
+        kl_deadband=0.001,
+    )
+
+
 def test_perplexity_controller_schedule_endpoints():
     controller = PerplexityController(
         start=5.0,
@@ -54,29 +80,14 @@ def test_adaptive_kl_controller_pushes_up_above_target():
     assert controller.strength > initial
 
 
+def test_benchmark_controls_use_torch_adam():
+    policy = _policy("adam")
+    assert isinstance(policy.optimizer, torch.optim.Adam)
+    assert not isinstance(policy.optimizer, torch.optim.AdamW)
+
+
 def test_benchmark_linear_lr_matches_ppo_formula_and_ignores_warmup():
-    policy = AdvShapePolicy(
-        observation_shape=(3,),
-        num_actions=2,
-        device=torch.device("cpu"),
-        learning_rate=1.0,
-        lr_schedule="benchmark_linear",
-        weight_decay=0.0,
-        adam_beta1=0.9,
-        adam_beta2=0.999,
-        adam_eps=1e-5,
-        perplexity_start=2.0,
-        perplexity_end=1.0,
-        entropy_strength=0.1,
-        entropy_baseline_ratio=1.0,
-        perplexity_adaptation_rate=0.0,
-        perplexity_beta=0.98,
-        perplexity_deadband=0.02,
-        kl_target=0.05,
-        kl_strength=0.01,
-        kl_adaptation_rate=0.0,
-        kl_deadband=0.001,
-    )
+    policy = _policy("adam")
     policy.set_lr(progress=0.25, update_idx=0, warmup_updates=20)
     assert policy.optimizer.param_groups[0]["lr"] == 0.75
 
