@@ -50,65 +50,84 @@ Instead, for every game and seed it:
 This is more expensive than comparing to a number copied from a plot, but the
 reference is numeric and reproducible rather than a pixel estimate.
 
-Single-seed comparison:
-
 ```bash
 bash run_advshape_paper.sh ppo
 bash run_advshape_paper.sh mmd
-```
-
-Equal-teacher-entropy ablation:
-
-```bash
 bash run_advshape_paper.sh ppo equal_entropy
-```
-
-Ten seeds:
-
-```bash
 SEEDS="0 1 2 3 4 5 6 7 8 9" bash run_advshape_paper.sh ppo
 ```
 
-The paper's Figure 15 also reports mean exploitability and standard deviation
-over 10 seeds for the best-performing hyperparameter set. The exact numeric
-final means are not tabulated in the paper, so the launcher deliberately does
-not claim to reproduce a Figure 15 endpoint from visual inspection. It instead
-performs an exact matched rerun of the repository-published best configuration.
+The paper's Figure 15 reports mean exploitability and standard deviation over
+10 seeds for the best-performing hyperparameter set. The exact numeric final
+means are not tabulated, so the launcher performs a fresh matched rerun of the
+repository-published best configuration instead of guessing endpoints from a
+plot.
 
-The script writes:
-
-```text
-results/<group>/summary.tsv
-```
-
-with per-seed baseline score, AdvShape score, delta, relative exploitability
-reduction, verdict, and both run directories.
+The script writes `results/<group>/summary.tsv` with per-seed baseline score,
+AdvShape score, delta, relative exploitability reduction, verdict, and both run
+directories.
 
 ## HPO-matched structural controls
 
 For each exact-exploitability game, `configs/control/{ppo,mmd}/<game>.yaml`
 reuses the benchmark authors' published best hyperparameters wherever AdvShape
-exposes the same knob. This includes optimizer settings, rollout/minibatch
-sizes, update epochs, gamma, GAE/value lambda, PPO clipping, value loss
-settings, gradient clipping, learner entropy coefficient, MMD KL coefficient,
-and the native PPO/MMD learning-rate annealing schedule.
+has the corresponding PPO/MMD mechanism.
 
-The matched controls use the benchmark runner's linear LR schedule exactly:
+The controls deliberately follow the benchmark implementation, not merely its
+headline coefficients:
+
+- unchanged `PPOAgent` network architecture and initialization;
+- `torch.optim.Adam`, with the benchmark Adam betas and epsilon;
+- the published game-specific rollout size, minibatch count, update epochs,
+  gamma, GAE lambda, clipping, value coefficient and gradient clipping;
+- PPO-style **per-minibatch** advantage normalization;
+- the AdvShape win-rate factor is applied **after** normalization, so its
+  magnitude is not normalized away;
+- minibatch size is computed from PPO's full rollout batch
+  `num_envs * num_steps`, then the learner/teacher samples are split across the
+  two policies. This keeps the two policies together close to PPO's optimizer
+  step count instead of giving each policy a full set of half-sized minibatches;
+- the benchmark's native linear learning-rate annealing:
 
 ```text
 lr = initial_lr * max(0, 1 - update / num_updates)
 num_updates = max_steps // (num_envs * num_steps) + 1
 ```
 
-Adaptive PPL and adaptive KL control are disabled. The learner keeps the
-baseline-selected entropy coefficient, while the teacher uses a fixed **5x
-higher entropy coefficient**, preserving the structural exploration asymmetry
-of the Century-RL recipe (`0.1` learner vs `0.5` teacher) without adding an
-adaptive thermostat.
+- PPO controls have no KL term;
+- MMD controls use the benchmark's **sample-based backward-KL approximation**
+  `ratio * logratio - (ratio - 1)`, with the published game-specific KL
+  coefficient, rather than AdvShape's exact full-distribution reverse KL.
 
-Thus the intentional structural differences from the matched PPO/MMD setup are:
+Adaptive PPL and adaptive KL control are disabled in these matched controls.
+The learner keeps the baseline-selected entropy coefficient, while the teacher
+uses a fixed **5x higher entropy coefficient**, preserving the structural
+exploration asymmetry of the Century-RL recipe (`0.1` learner vs `0.5` teacher)
+without adding an adaptive thermostat.
 
-1. separate learner and teacher policies;
+### Interaction-budget handling
+
+AdvShape needs complete own-policy trajectories to compute learner and teacher
+returns independently. Therefore games already in flight are finished at an
+update boundary. To avoid silently receiving extra cumulative experience, the
+next rollout is shortened by the previous drain: update targets follow the same
+cumulative `num_envs * num_steps` boundaries as PPO. Only the final bounded
+end-of-run drain can remain, analogous to the benchmark runner finishing its
+last fixed batch past `max_steps` when the budget is not batch-aligned.
+
+### Remaining intentional structural difference
+
+The matched controls are not claimed to be byte-for-byte PPO. PPO uses one
+shared policy/critic and computes GAE over the raw alternating player stream.
+AdvShape necessarily splits the stream into each policy's own decision
+trajectory so learner and teacher can have independent values, returns and
+policy updates. That trajectory decomposition, together with win-rate shaping
+and higher teacher exploration, is part of the method being tested rather than
+a hidden optimizer/hyperparameter change.
+
+Thus the intended differences from matched PPO/MMD are:
+
+1. separate learner and teacher policies and their own trajectories;
 2. win-rate controlled advantage shaping;
 3. fixed higher teacher exploration.
 
@@ -121,7 +140,7 @@ Exact exploitability is supported for:
 
 ### Selected entropy / KL coefficients
 
-| game | PPO learner entropy | PPO teacher entropy | MMD learner entropy | MMD teacher entropy | MMD reverse KL |
+| game | PPO learner entropy | PPO teacher entropy | MMD learner entropy | MMD teacher entropy | MMD backward KL |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | classical Phantom TTT | 0.05 | 0.25 | 0.05 | 0.25 | 0.05 |
 | abrupt Phantom TTT | 0.20 | 1.00 | 0.20 | 1.00 | 0.20 |
