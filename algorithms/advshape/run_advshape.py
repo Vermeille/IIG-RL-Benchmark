@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-import time
 
 import numpy as np
 import pyspiel
@@ -18,7 +17,7 @@ from algorithms.advshape.advshape import (
     Transition,
     normalize_advantages,
 )
-from algorithms.ppo.ppo import PPOAgent, legal_actions_to_mask
+from algorithms.ppo.ppo import PPOAgent
 from utils import log_to_csv
 
 
@@ -124,16 +123,16 @@ class RunAdvShape:
         target = self.total_steps_done + requested_steps
         active = list(range(len(self.envs)))
 
-        # Fill roughly one PPO batch. Environments that terminate before the
-        # target are immediately restarted so all workers stay busy.
+        # Fill the nominal PPO interaction budget for this update.
         while self.total_steps_done < target:
             finished = self._step_envs(active, episodes)
             for env_idx in finished:
                 self.time_steps[env_idx] = self.envs[env_idx].reset()
 
-        # Do not cut trajectories at the batch boundary. Finish every episode
-        # that has already started, but do not start a new one. This makes GAE
-        # follow each strategy's own decision sequence exactly.
+        # Own-policy GAE needs complete own-decision trajectories. Finish games
+        # already in flight, but do not start new ones. The run loop compensates
+        # this drain on the next nominal PPO batch boundary so these extra steps
+        # do not accumulate into a larger overall sample budget.
         draining = [
             i for i in active if self.traces[i][0] or self.traces[i][1]
         ]
@@ -191,8 +190,12 @@ class RunAdvShape:
                 transitions[strategy_id].extend(trace)
                 utilities[strategy_id].append(episode.utilities[strategy_id])
 
-        normalize_advantages(transitions[0])
-        normalize_advantages(transitions[1])
+        # Native AdvShape uses one global normalization per strategy. PPO-matched
+        # controls instead normalize inside each minibatch in optimize(), exactly
+        # where benchmark PPO does it.
+        if self.config.advantage_normalization == "global":
+            normalize_advantages(transitions[0])
+            normalize_advantages(transitions[1])
         win_rates = [self._win_rate(utilities[0]), self._win_rate(utilities[1])]
         return transitions, win_rates
 
@@ -237,11 +240,23 @@ class RunAdvShape:
         self.train_log_file = os.path.join(self.meta_config.experiment_dir, "train_log.csv")
 
         batch_size = int(self.config.num_envs * self.config.num_steps)
-        # Match PPO/MMD's own scheduler denominator for HPO-matched controls.
+        # Same denominator as PPO/MMD. Complete-episode draining may move an
+        # individual update past a boundary, so subsequent requested rollout
+        # sizes are reduced to keep cumulative interactions on PPO's schedule.
         num_updates = self.meta_config.max_steps // batch_size + 1
+        next_nominal_boundary = min(batch_size, self.meta_config.max_steps)
         cp_step = 0
         while self.total_steps_done < self.meta_config.max_steps:
-            requested = min(batch_size, self.meta_config.max_steps - self.total_steps_done)
+            if self.total_steps_done >= next_nominal_boundary:
+                next_nominal_boundary = min(
+                    next_nominal_boundary + batch_size,
+                    self.meta_config.max_steps,
+                )
+                if self.total_steps_done >= self.meta_config.max_steps:
+                    break
+                continue
+
+            requested = next_nominal_boundary - self.total_steps_done
             episodes = self._collect_batch(requested)
             transitions, win_rates = self._prepare(episodes)
             progress = min(self.total_steps_done / self.meta_config.max_steps, 1.0)
@@ -268,6 +283,10 @@ class RunAdvShape:
             ]
             self.update_idx += 1
             self._log_update(win_rates, metrics, len(episodes))
+            next_nominal_boundary = min(
+                next_nominal_boundary + batch_size,
+                self.meta_config.max_steps,
+            )
 
             while (
                 self.total_steps_done >= cp_step + self.meta_config.compute_exploitability_every
