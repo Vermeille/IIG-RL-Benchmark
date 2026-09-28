@@ -1,0 +1,52 @@
+algorithm_name: advshape
+
+# Benchmark batching / device
+cuda: false
+num_envs: 8
+num_steps: 128
+num_minibatches: 4
+update_epochs: 1
+warmup_updates: 20
+lr_schedule: advshape
+minibatch_mode: per_policy
+advantage_normalization: global
+
+# PPO / returns. These mirror the current Century-RL adversarial recipe where
+# possible while retaining the benchmark's PPOAgent architecture.
+learning_rate: 0.0006
+optimizer_type: adamw
+weight_decay: 0.01
+adam_beta1: 0.5
+adam_beta2: 0.95
+adam_eps: 0.00001
+gamma: 1.0
+gae_lambda: 0.0
+value_lambda: 1.0
+clip_coef: 0.2
+clip_vloss: false
+vf_coef: 1.0
+max_grad_norm: 10000.0
+
+# Win-rate controlled advantage shaping.
+agent_threshold: 0.98
+environment_threshold: 0.70
+
+# Independent policy-diversity curricula. Perplexity is exp(entropy), i.e. the
+# effective number of legal actions represented by the policy.
+agent_ppl_start: 5.0
+agent_ppl_end: 1.0
+environment_ppl_start: 5.0
+environment_ppl_end: 3.0
+agent_entropy_strength: 0.1
+environment_entropy_strength: 0.5
+entropy_baseline_ratio: 0.05
+perplexity_adaptation_rate: 0.004
+perplexity_beta: 0.98
+perplexity_deadband: 0.02
+
+# Adaptive reverse-KL trust region around the rollout policy.
+kl_mode: exact
+kl_target: 0.05
+kl_strength: 0.01
+kl_adaptation_rate: 0.01
+kl_deadband: 0.001

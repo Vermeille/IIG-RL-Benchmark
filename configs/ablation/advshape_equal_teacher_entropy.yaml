@@ -1,0 +1,5 @@
+# @package algorithm
+# Remove the fixed exploration asymmetry by forcing the teacher entropy
+# coefficient to equal the learner coefficient. Most useful on top of an
+# HPO-matched PPO/MMD control, where adaptive PPL is already disabled.
+environment_entropy_strength: ${.agent_entropy_strength}

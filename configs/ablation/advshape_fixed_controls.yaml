@@ -1,0 +1,5 @@
+# @package algorithm
+# Disable both adaptive controllers while keeping both regularizers.
+# Entropy strengths and KL strength stay fixed throughout training.
+perplexity_adaptation_rate: 0.0
+kl_adaptation_rate: 0.0

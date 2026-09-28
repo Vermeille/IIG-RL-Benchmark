@@ -1,0 +1,4 @@
+# @package algorithm
+# Keep the reverse-KL penalty, but freeze its coefficient.
+# This isolates the contribution of the adaptive KL controller.
+kl_adaptation_rate: 0.0
