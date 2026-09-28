@@ -113,11 +113,12 @@ printf "Reference = exact rerun of repository best_hparams on the same seed/budg
 printf "Actual final interaction counts are reported for both runs.\n"
 
 SUMMARY_DIR="$SAVE_DIR/$GROUP"
+LOG_DIR="$SUMMARY_DIR/logs"
 BASELINE_GROUP="${GROUP}_baseline"
 ADV_GROUP="${GROUP}_advshape"
-mkdir -p "$SUMMARY_DIR"
+mkdir -p "$LOG_DIR"
 SUMMARY="$SUMMARY_DIR/summary.tsv"
-printf "game\tseed\tbaseline_algo\tbaseline_steps\tadvshape_steps\tstep_delta\tbaseline_score\tadvshape_score\tdelta\treduction_pct\tstatus\tbaseline_run_dir\tadvshape_run_dir\n" > "$SUMMARY"
+printf "game\tseed\tbaseline_algo\tbaseline_steps\tadvshape_steps\tstep_delta\tbaseline_score\tadvshape_score\tdelta\treduction_pct\tstatus\tbaseline_run_dir\tadvshape_run_dir\tbaseline_stdout_log\tadvshape_stdout_log\n" > "$SUMMARY"
 
 for game in $GAMES; do
   hparams="best_hyperparameters/min_final_expl_hparams/${CONTROL}/${game}/best_hparams.yaml"
@@ -145,11 +146,12 @@ for game in $GAMES; do
       "compute_exploitability_every=$((STEPS + 1))"
     )
     baseline_cmd+=("${overrides[@]}")
+    baseline_stdout_log="$LOG_DIR/${game}_seed${seed}_${CONTROL}.log"
 
     printf 'running:'
     printf ' %q' "${baseline_cmd[@]}"
-    printf '\n'
-    "${baseline_cmd[@]}"
+    printf '\nlog: %s\n' "$baseline_stdout_log"
+    "${baseline_cmd[@]}" 2>&1 | tee "$baseline_stdout_log"
 
     baseline_base="$SAVE_DIR/$BASELINE_GROUP/$CONTROL/$game"
     baseline_run=$(latest_run_dir "$baseline_base") || {
@@ -179,11 +181,12 @@ for game in $GAMES; do
     if [[ "$ABLATION" == "equal_entropy" ]]; then
       adv_cmd+=("+ablation=advshape_equal_teacher_entropy")
     fi
+    adv_stdout_log="$LOG_DIR/${game}_seed${seed}_advshape.log"
 
     printf 'running:'
     printf ' %q' "${adv_cmd[@]}"
-    printf '\n'
-    "${adv_cmd[@]}"
+    printf '\nlog: %s\n' "$adv_stdout_log"
+    "${adv_cmd[@]}" 2>&1 | tee "$adv_stdout_log"
 
     adv_base="$SAVE_DIR/$ADV_GROUP/advshape/$game"
     adv_run=$(latest_run_dir "$adv_base") || {
@@ -209,9 +212,10 @@ for game in $GAMES; do
     printf "interaction budget: AdvShape=%s | %s=%s | delta=%+d\n" \
       "$adv_steps" "$CONTROL" "$baseline_steps" "$step_delta"
 
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
       "$game" "$seed" "$CONTROL" "$baseline_steps" "$adv_steps" "$step_delta" \
-      "$baseline_score" "$adv_score" "$delta" "$reduction" "$status" "$baseline_run" "$adv_run" >> "$SUMMARY"
+      "$baseline_score" "$adv_score" "$delta" "$reduction" "$status" "$baseline_run" "$adv_run" \
+      "$baseline_stdout_log" "$adv_stdout_log" >> "$SUMMARY"
   done
 
   baseline_mean=$(mean_scores "${baseline_scores[@]}")
@@ -232,5 +236,6 @@ for game in $GAMES; do
 done
 
 printf "\n${blue}Summary written to %s${reset}\n" "$SUMMARY"
+printf "Full stdout/stderr logs written under %s\n" "$LOG_DIR"
 printf "For the paper-style comparison use: SEEDS=\"0 1 2 3 4 5 6 7 8 9\" bash run_advshape_paper.sh %s%s\n" \
   "$CONTROL" "${ABLATION:+ $ABLATION}"
