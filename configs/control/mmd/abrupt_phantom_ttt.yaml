@@ -5,6 +5,7 @@
 # the fixed AdvShape structural asymmetry at 5x, with no adaptive PPL controller.
 learning_rate: 0.00025
 lr_schedule: benchmark_linear
+optimizer_type: adam
 weight_decay: 0.0
 adam_beta1: 0.9
 adam_beta2: 0.999
@@ -14,6 +15,8 @@ num_steps: 16
 num_minibatches: 1
 update_epochs: 4
 warmup_updates: 0
+minibatch_mode: ppo_total_batch
+advantage_normalization: ppo_minibatch
 gamma: 0.99
 gae_lambda: 0.95
 value_lambda: 0.95
@@ -25,5 +28,6 @@ agent_entropy_strength: 0.2
 environment_entropy_strength: 1.0
 perplexity_adaptation_rate: 0.0
 entropy_baseline_ratio: 1.0
+kl_mode: mmd_approx
 kl_strength: 0.2
 kl_adaptation_rate: 0.0
