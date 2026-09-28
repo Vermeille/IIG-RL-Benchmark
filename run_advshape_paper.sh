@@ -16,12 +16,6 @@ set -euo pipefail
 #   SAVE_DIR=results
 #
 # Lower exploitability is better.
-#
-# We intentionally do NOT hard-code visual read-offs from Figure 15. The paper
-# plots the 10-seed means but does not tabulate their exact final values. Instead
-# this script reruns the corresponding PPO/MMD baseline using the repository's
-# published best_hparams.yaml, on the exact same seed and training budget, then
-# runs AdvShape and compares the exact final exploitabilities.
 
 CONTROL="${1:-ppo}"
 ABLATION="${2:-}"
@@ -47,14 +41,14 @@ red='\033[0;31m'
 blue='\033[0;34m'
 reset='\033[0m'
 
-final_score() {
-  python - "$1" <<'PY'
+final_field() {
+  python - "$1" "$2" <<'PY'
 import csv, sys
 with open(sys.argv[1], newline='') as f:
     rows = list(csv.DictReader(f))
 if not rows:
     raise SystemExit("empty exploitability.csv")
-print(rows[-1]["avg_score_response"])
+print(rows[-1][sys.argv[2]])
 PY
 }
 
@@ -112,18 +106,18 @@ latest_run_dir() {
 printf "\n${blue}=== AdvShape exact matched-baseline benchmark ===${reset}\n"
 printf "baseline algo : %s\n" "$CONTROL"
 printf "ablation      : %s\n" "${ABLATION:-none}"
-printf "steps         : %s\n" "$STEPS"
+printf "nominal steps : %s\n" "$STEPS"
 printf "seeds         : %s\n" "$SEEDS"
 printf "group         : %s\n\n" "$GROUP"
 printf "Reference = exact rerun of repository best_hparams on the same seed/budget.\n"
-printf "No Figure 15 numbers are guessed. Civilization survives another day.\n"
+printf "Actual final interaction counts are reported for both runs.\n"
 
 SUMMARY_DIR="$SAVE_DIR/$GROUP"
 BASELINE_GROUP="${GROUP}_baseline"
 ADV_GROUP="${GROUP}_advshape"
 mkdir -p "$SUMMARY_DIR"
 SUMMARY="$SUMMARY_DIR/summary.tsv"
-printf "game\tseed\tbaseline_algo\tbaseline_score\tadvshape_score\tdelta\treduction_pct\tstatus\tbaseline_run_dir\tadvshape_run_dir\n" > "$SUMMARY"
+printf "game\tseed\tbaseline_algo\tbaseline_steps\tadvshape_steps\tstep_delta\tbaseline_score\tadvshape_score\tdelta\treduction_pct\tstatus\tbaseline_run_dir\tadvshape_run_dir\n" > "$SUMMARY"
 
 for game in $GAMES; do
   hparams="best_hyperparameters/min_final_expl_hparams/${CONTROL}/${game}/best_hparams.yaml"
@@ -164,9 +158,10 @@ for game in $GAMES; do
     }
     baseline_csv="$baseline_run/exploitability.csv"
     [[ -f "$baseline_csv" ]] || { echo "Missing $baseline_csv" >&2; exit 1; }
-    baseline_score=$(final_score "$baseline_csv")
+    baseline_score=$(final_field "$baseline_csv" avg_score_response)
+    baseline_steps=$(final_field "$baseline_csv" global_step)
     baseline_scores+=("$baseline_score")
-    printf "reference final exploitability = %.6f\n" "$baseline_score"
+    printf "reference final exploitability = %.6f at %s interactions\n" "$baseline_score" "$baseline_steps"
 
     printf "\n${blue}seed %s: AdvShape${reset}\n" "$seed"
     adv_cmd=(
@@ -197,10 +192,12 @@ for game in $GAMES; do
     }
     adv_csv="$adv_run/exploitability.csv"
     [[ -f "$adv_csv" ]] || { echo "Missing $adv_csv" >&2; exit 1; }
-    adv_score=$(final_score "$adv_csv")
+    adv_score=$(final_field "$adv_csv" avg_score_response)
+    adv_steps=$(final_field "$adv_csv" global_step)
     adv_scores+=("$adv_score")
 
     IFS=$'\t' read -r status delta reduction <<< "$(compare_scores "$adv_score" "$baseline_score")"
+    step_delta=$((adv_steps - baseline_steps))
     case "$status" in
       BETTER) color="$green" ;;
       TIED) color="$yellow" ;;
@@ -209,9 +206,12 @@ for game in $GAMES; do
 
     printf "${color}AdvShape %.6f vs %s %.6f | %s | delta=%+.6f | reduction=%+.2f%%%s\n" \
       "$adv_score" "$CONTROL" "$baseline_score" "$status" "$delta" "$reduction" "$reset"
+    printf "interaction budget: AdvShape=%s | %s=%s | delta=%+d\n" \
+      "$adv_steps" "$CONTROL" "$baseline_steps" "$step_delta"
 
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-      "$game" "$seed" "$CONTROL" "$baseline_score" "$adv_score" "$delta" "$reduction" "$status" "$baseline_run" "$adv_run" >> "$SUMMARY"
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "$game" "$seed" "$CONTROL" "$baseline_steps" "$adv_steps" "$step_delta" \
+      "$baseline_score" "$adv_score" "$delta" "$reduction" "$status" "$baseline_run" "$adv_run" >> "$SUMMARY"
   done
 
   baseline_mean=$(mean_scores "${baseline_scores[@]}")
