@@ -8,10 +8,13 @@ num_minibatches: 4
 update_epochs: 1
 warmup_updates: 20
 lr_schedule: advshape
+minibatch_mode: per_policy
+advantage_normalization: global
 
 # PPO / returns. These mirror the current Century-RL adversarial recipe where
 # possible while retaining the benchmark's PPOAgent architecture.
 learning_rate: 0.0006
+optimizer_type: adamw
 weight_decay: 0.01
 adam_beta1: 0.5
 adam_beta2: 0.95
@@ -42,6 +45,7 @@ perplexity_beta: 0.98
 perplexity_deadband: 0.02
 
 # Adaptive reverse-KL trust region around the rollout policy.
+kl_mode: exact
 kl_target: 0.05
 kl_strength: 0.01
 kl_adaptation_rate: 0.01
