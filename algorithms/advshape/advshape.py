@@ -146,6 +146,7 @@ class AdvShapePolicy:
         device: torch.device,
         learning_rate: float,
         lr_schedule: str,
+        optimizer_type: str,
         weight_decay: float,
         adam_beta1: float,
         adam_beta2: float,
@@ -166,13 +167,20 @@ class AdvShapePolicy:
         self.num_actions = int(num_actions)
         self.lr_schedule = str(lr_schedule)
         self.network = PPOAgent(self.num_actions, observation_shape, device).to(device)
-        self.optimizer = optim.AdamW(
-            self.network.parameters(),
+        optimizer_kwargs = dict(
             lr=learning_rate,
             betas=(adam_beta1, adam_beta2),
             eps=adam_eps,
             weight_decay=weight_decay,
         )
+        if optimizer_type == "adam":
+            # Benchmark PPO/MMD use torch.optim.Adam with the default betas and
+            # eps=1e-5. HPO-matched controls select this path explicitly.
+            self.optimizer = optim.Adam(self.network.parameters(), **optimizer_kwargs)
+        elif optimizer_type == "adamw":
+            self.optimizer = optim.AdamW(self.network.parameters(), **optimizer_kwargs)
+        else:
+            raise ValueError(f"unknown optimizer_type: {optimizer_type}")
         self.base_learning_rate = float(learning_rate)
         self.perplexity = PerplexityController(
             start=perplexity_start,
@@ -232,6 +240,7 @@ class AdvShapeLearner:
             device=device,
             learning_rate=config.learning_rate,
             lr_schedule=config.lr_schedule,
+            optimizer_type=config.optimizer_type,
             weight_decay=config.weight_decay,
             adam_beta1=config.adam_beta1,
             adam_beta2=config.adam_beta2,
@@ -267,7 +276,12 @@ class AdvShapeLearner:
         actions = torch.stack([t.action for t in transitions]).long().to(self.device)
         old_logprobs = torch.stack([t.old_logprob for t in transitions]).to(self.device)
         old_probs = torch.stack([t.old_probs for t in transitions]).to(self.device)
-        advantages = torch.tensor(
+        raw_advantages = torch.tensor(
+            [t.advantage for t in transitions],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        normalized_advantages = torch.tensor(
             [t.normalized_advantage for t in transitions],
             dtype=torch.float32,
             device=self.device,
@@ -278,7 +292,17 @@ class AdvShapeLearner:
             device=self.device,
         )
         old_values = torch.stack([t.value for t in transitions]).to(self.device).view(-1)
-        return obs, legal, actions, old_logprobs, old_probs, advantages, value_targets, old_values
+        return (
+            obs,
+            legal,
+            actions,
+            old_logprobs,
+            old_probs,
+            raw_advantages,
+            normalized_advantages,
+            value_targets,
+            old_values,
+        )
 
     def optimize(
         self,
@@ -305,15 +329,34 @@ class AdvShapeLearner:
             actions,
             old_logprobs,
             old_probs,
-            advantages,
+            raw_advantages,
+            normalized_advantages,
             value_targets,
             old_values,
         ) = self._tensorize(transitions)
-        advantages = advantages * float(advantage_scale)
+
+        if self.config.advantage_normalization == "global":
+            advantages = normalized_advantages
+        elif self.config.advantage_normalization in ("ppo_minibatch", "none"):
+            advantages = raw_advantages
+        else:
+            raise ValueError(
+                f"unknown advantage_normalization: {self.config.advantage_normalization}"
+            )
 
         n = len(transitions)
-        num_minibatches = min(self.config.num_minibatches, n)
-        minibatch_size = max(1, math.ceil(n / num_minibatches))
+        if self.config.minibatch_mode == "ppo_total_batch":
+            # PPO defines minibatch size from the complete rollout batch. We
+            # keep that size after splitting samples between learner/teacher,
+            # so the two policies together perform roughly PPO's total number
+            # of optimizer steps instead of doubling it with half-sized batches.
+            total_batch_size = int(self.config.num_envs * self.config.num_steps)
+            minibatch_size = max(1, total_batch_size // self.config.num_minibatches)
+        elif self.config.minibatch_mode == "per_policy":
+            num_minibatches = min(self.config.num_minibatches, n)
+            minibatch_size = max(1, math.ceil(n / num_minibatches))
+        else:
+            raise ValueError(f"unknown minibatch_mode: {self.config.minibatch_mode}")
         indices = np.arange(n)
 
         metrics = {
@@ -341,9 +384,19 @@ class AdvShapeLearner:
                     obs[mb], legal_actions_mask=legal[mb], action=actions[mb]
                 )
                 new_value = new_value.view(-1)
-                ratio = torch.exp(new_logprob - old_logprobs[mb])
+                logratio = new_logprob - old_logprobs[mb]
+                ratio = logratio.exp()
 
                 mb_adv = advantages[mb]
+                if self.config.advantage_normalization == "ppo_minibatch":
+                    # Match PPO exactly, then apply AdvShape afterwards so the
+                    # WR scale is not normalized away.
+                    if mb_adv.numel() > 1:
+                        mb_adv = (mb_adv - mb_adv.mean()) / (mb_adv.std() + 1e-8)
+                    else:
+                        mb_adv = mb_adv - mb_adv.mean()
+                mb_adv = mb_adv * float(advantage_scale)
+
                 pg1 = -mb_adv * ratio
                 pg2 = -mb_adv * torch.clamp(
                     ratio,
@@ -372,13 +425,22 @@ class AdvShapeLearner:
                     measured_ppl = 0.0
                 entropy_strength = policy.perplexity.update(measured_ppl, progress)
 
-                # Reverse KL KL(pi_new || pi_rollout), masked implicitly because
-                # both distributions assign zero probability to illegal actions.
-                safe_new = probs.clamp_min(1e-12)
-                safe_old = old_probs[mb].clamp_min(1e-12)
-                reverse_kl = (
-                    probs * (safe_new.log() - safe_old.log())
-                ).sum(dim=1).mean()
+                if self.config.kl_mode == "exact":
+                    # Full-distribution reverse KL KL(pi_new || pi_rollout),
+                    # used by the native AdvShape recipe.
+                    safe_new = probs.clamp_min(1e-12)
+                    safe_old = old_probs[mb].clamp_min(1e-12)
+                    reverse_kl = (
+                        probs * (safe_new.log() - safe_old.log())
+                    ).sum(dim=1).mean()
+                elif self.config.kl_mode == "mmd_approx":
+                    # Match IIG-RL-Benchmark MMD exactly: the sample-based
+                    # backward-KL approximation from the PPO importance ratio.
+                    reverse_kl = (ratio * logratio - (ratio - 1.0)).mean()
+                elif self.config.kl_mode == "none":
+                    reverse_kl = torch.zeros((), device=self.device)
+                else:
+                    raise ValueError(f"unknown kl_mode: {self.config.kl_mode}")
                 kl_strength = policy.kl.update(reverse_kl.detach().item())
 
                 loss = (
